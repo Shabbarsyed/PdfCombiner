@@ -4,17 +4,53 @@ import streamlit as st
 from PyPDF2 import PdfMerger
 from PIL import Image
 import io
+import uuid  # Import uuid module for unique user IDs
 
-# Directories for uploaded files and combined PDFs
-UPLOAD_DIR = "uploaded_files"
-COMBINED_DIR = "combined_pdfs"
+# Default directories for uploaded files and combined PDFs
+DEFAULT_UPLOAD_DIR = "user_uploaded_files"
+DEFAULT_COMBINED_DIR = "combined_pdfs"
 
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(COMBINED_DIR, exist_ok=True)
+# Create directories if they do not exist
+os.makedirs(DEFAULT_UPLOAD_DIR, exist_ok=True)
+os.makedirs(DEFAULT_COMBINED_DIR, exist_ok=True)
+
+# Streamlit app title
+st.title("PDF and PNG Multi-ZIP Combiner Tool")
+
+# Custom location input (stored in session state)
+if 'custom_dir' not in st.session_state:
+    st.session_state.custom_dir = DEFAULT_UPLOAD_DIR
+
+# Allow users to change the location of the upload directory
+custom_directory = st.text_input(
+    "Enter the custom file directory (Leave empty for default):", 
+    value=st.session_state.custom_dir
+)
+
+# Update session state for custom directory if changed
+if custom_directory.strip():
+    st.session_state.custom_dir = custom_directory.strip()
+
+# Function to get a unique directory for each user (based on session ID or UUID)
+def get_user_directory():
+    # Generate a unique user ID based on uuid (you could use session ID, or other methods too)
+    if 'user_uid' not in st.session_state:
+        # Generate a new UUID for each session
+        st.session_state.user_uid = str(uuid.uuid4())  
+
+    user_uid = st.session_state.user_uid
+    user_dir = os.path.join(DEFAULT_UPLOAD_DIR, user_uid)
+
+    # Check if the directory exists from previous sessions, otherwise create a new one
+    if not os.path.exists(user_dir):
+        os.makedirs(user_dir, exist_ok=True)
+    
+    return user_dir
 
 # Function to extract ZIP files
 def extract_zip(uploaded_zip):
-    folder_path = os.path.join(UPLOAD_DIR, uploaded_zip.name.split(".")[0])
+    user_directory = get_user_directory()
+    folder_path = os.path.join(user_directory, uploaded_zip.name.split(".")[0])
     os.makedirs(folder_path, exist_ok=True)
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         zip_ref.extractall(folder_path)
@@ -38,7 +74,7 @@ def combine_files(selected_files, output_filename):
             temp_images.append(temp_pdf)
 
     # Save the combined PDF
-    output_path = os.path.join(COMBINED_DIR, output_filename)
+    output_path = os.path.join(DEFAULT_COMBINED_DIR, output_filename)
     with open(output_path, "wb") as output_file:
         merger.write(output_file)
 
@@ -48,8 +84,14 @@ def combine_files(selected_files, output_filename):
 
     return output_path
 
-# Streamlit app
-st.title("PDF and PNG Multi-ZIP Combiner Tool")
+# Function to list all files in the user's directory
+def list_user_files():
+    user_directory = get_user_directory()
+    return [os.path.join(user_directory, file) for file in os.listdir(user_directory) if os.path.isfile(os.path.join(user_directory, file))]
+
+# Function to delete a file from the user's directory
+def delete_file(file_path):
+    os.remove(file_path)
 
 # File upload section
 uploaded_zips = st.file_uploader("Upload ZIP files containing PDFs and PNGs", type=["zip"], accept_multiple_files=True)
@@ -68,9 +110,15 @@ if uploaded_zips:
                     all_files.append(file_path)
 
 if all_files:
-    # Display all extracted files and allow user selection
+    # Display all extracted files and allow user selection with checkboxes
     st.write("### Extracted Files:")
-    selected_files = st.multiselect("Select files to combine:", all_files)
+
+    # Create checkboxes for each file
+    selected_files = []
+    for file_path in all_files:
+        file_name = os.path.basename(file_path)  # Only show the file name, not the full path
+        if st.checkbox(file_name, key=file_path):
+            selected_files.append(file_path)
 
     # Combine files button
     if selected_files:
@@ -84,10 +132,32 @@ if all_files:
             with open(combined_pdf_path, "rb") as f:
                 st.download_button("Download Combined PDF", f, file_name=output_filename)
 
+# Display and allow removal of uploaded files
+st.write("### Your Uploaded Files:")
+user_files = list_user_files()
+
+if user_files:
+    for user_file in user_files:
+        file_name = os.path.basename(user_file)
+        
+        # Display each file with a delete button
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.write(file_name)
+        with col2:
+            delete_button = st.button(f"Delete {file_name}", key=user_file)
+            if delete_button:
+                delete_file(user_file)
+                st.success(f"File {file_name} has been deleted.")
+                st.experimental_rerun()  # Refresh to show updated file list
+
+else:
+    st.write("No files uploaded yet.")
+
 # Display stored combined PDFs
 st.write("### Stored Combined PDFs:")
-for pdf_file in os.listdir(COMBINED_DIR):
-    pdf_path = os.path.join(COMBINED_DIR, pdf_file)
+for pdf_file in os.listdir(DEFAULT_COMBINED_DIR):
+    pdf_path = os.path.join(DEFAULT_COMBINED_DIR, pdf_file)
     st.write(pdf_file)
     with open(pdf_path, "rb") as f:
         st.download_button(f"Download {pdf_file}", f, file_name=pdf_file)
